@@ -3,15 +3,24 @@ package br.ufpb.jwpersonal.application.service;
 
 import br.ufpb.jwpersonal.domain.excecao.RecursoNaoEncontradoException;
 import br.ufpb.jwpersonal.domain.excecao.ValorInvalidoException;
+import br.ufpb.jwpersonal.domain.fabrica.GeradorDePlano;
+import br.ufpb.jwpersonal.domain.fabrica.ModeloInicialPlano;
 import br.ufpb.jwpersonal.domain.model.*;
 import br.ufpb.jwpersonal.domain.politica.PoliticaProgressao;
 import br.ufpb.jwpersonal.repository.*;
 
+import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 
-/** Coordena os casos de uso de prescricao e revisao (CU01 e CU02). */
+/**
+ * Coordena os casos de uso de prescrição e revisão (CU01 e CU02).
+ *
+ * Também utiliza o padrão Factory Method para gerar modelos
+ * iniciais de acordo com o objetivo do plano.
+ */
 public class PrescricaoService {
 
     private final PlanoRepository planos;
@@ -20,27 +29,107 @@ public class PrescricaoService {
     private final UnidadeDeTrabalho unidadeDeTrabalho;
     private final Autorizador autorizador;
 
-    public PrescricaoService(PlanoRepository planos,
-                            ExercicioRepository exercicios,
-                            ExecucaoRepository execucoes,
-                            UnidadeDeTrabalho unidadeDeTrabalho,
-                            Autorizador autorizador) {
+    private final Map<ObjetivoPlano, GeradorDePlano> geradoresPorObjetivo;
+
+    public PrescricaoService(
+            PlanoRepository planos,
+            ExercicioRepository exercicios,
+            ExecucaoRepository execucoes,
+            UnidadeDeTrabalho unidadeDeTrabalho,
+            Autorizador autorizador,
+            Map<ObjetivoPlano, GeradorDePlano> geradoresPorObjetivo) {
+
         this.planos = Objects.requireNonNull(planos);
         this.exercicios = Objects.requireNonNull(exercicios);
         this.execucoes = Objects.requireNonNull(execucoes);
         this.unidadeDeTrabalho = Objects.requireNonNull(unidadeDeTrabalho);
         this.autorizador = Objects.requireNonNull(autorizador);
+
+        Objects.requireNonNull(
+                geradoresPorObjetivo,
+                "Os geradores de plano são obrigatórios."
+        );
+
+        // Copia os geradores para evitar alterações externas no registro.
+        Map<ObjetivoPlano, GeradorDePlano> copia =
+                new EnumMap<>(ObjetivoPlano.class);
+
+        copia.putAll(geradoresPorObjetivo);
+
+        // Garante que exista um gerador para cada objetivo cadastrado.
+        for (ObjetivoPlano objetivo : ObjetivoPlano.values()) {
+
+            if (!copia.containsKey(objetivo)) {
+                throw new IllegalArgumentException(
+                        "Não existe gerador configurado para o objetivo: "
+                                + objetivo
+                );
+            }
+        }
+
+        this.geradoresPorObjetivo = Map.copyOf(copia);
     }
 
-    /** CU01: cria o plano com a versao 1 em RASCUNHO. */
-    public PlanoTreino prescrever(SessaoUsuario sessao,
-                                 String titulo,
-                                 ObjetivoPlano objetivo,
-                                 List<Treino> treinos) {
-        autorizador.exigirPersonal(sessao);
-        Objects.requireNonNull(treinos, "A lista de treinos e obrigatoria.");
+    /**
+     * Factory Method:
+     * gera um modelo inicial de acordo com o objetivo escolhido.
+     *
+     * Somente usuários PERSONAL podem solicitar modelos.
+     */
+    public ModeloInicialPlano gerarModeloInicial(
+            SessaoUsuario sessao,
+            ObjetivoPlano objetivo) {
 
-        PlanoTreino plano = new PlanoTreino(titulo, objetivo, sessao.usuarioId());
+        autorizador.exigirPersonal(sessao);
+
+        Objects.requireNonNull(
+                objetivo,
+                "O objetivo do plano é obrigatório."
+        );
+
+        GeradorDePlano gerador =
+                geradoresPorObjetivo.get(objetivo);
+
+        if (gerador == null) {
+            throw new ValorInvalidoException(
+                    "Não existe um modelo disponível para esse objetivo."
+            );
+        }
+
+        ModeloInicialPlano modelo = gerador.gerarModeloInicial();
+
+        // Garante que o gerador selecionado produziu o objetivo solicitado.
+        if (modelo.objetivo() != objetivo) {
+            throw new IllegalStateException(
+                    "O gerador retornou um modelo com objetivo incorreto."
+            );
+        }
+
+        return modelo;
+    }
+
+    /**
+     * CU01: cria o plano com a versão 1 em RASCUNHO.
+     */
+    public PlanoTreino prescrever(
+            SessaoUsuario sessao,
+            String titulo,
+            ObjetivoPlano objetivo,
+            List<Treino> treinos) {
+
+        autorizador.exigirPersonal(sessao);
+
+        Objects.requireNonNull(
+                treinos,
+                "A lista de treinos é obrigatória."
+        );
+
+        PlanoTreino plano = new PlanoTreino(
+                titulo,
+                objetivo,
+                sessao.usuarioId()
+        );
+
         VersaoPlano rascunho = plano.versaoPorNumero(1);
 
         for (Treino treino : treinos) {
@@ -54,8 +143,13 @@ public class PrescricaoService {
         });
     }
 
-    /** CU02: copia a versao publicada para o proximo rascunho. */
-    public VersaoPlano iniciarRevisao(SessaoUsuario sessao, UUID planoId) {
+    /**
+     * CU02: copia a versão publicada para o próximo rascunho.
+     */
+    public VersaoPlano iniciarRevisao(
+            SessaoUsuario sessao,
+            UUID planoId) {
+
         PlanoTreino plano = buscarPlanoAutorizado(sessao, planoId);
 
         return unidadeDeTrabalho.executar(() -> {
@@ -65,11 +159,22 @@ public class PrescricaoService {
         });
     }
 
-    /** Adiciona uma sessao a um rascunho. */
-    public void adicionarTreino(SessaoUsuario sessao, UUID planoId,
-                               int numeroVersao, Treino treino) {
+    /**
+     * Adiciona uma sessão a um rascunho.
+     */
+    public void adicionarTreino(
+            SessaoUsuario sessao,
+            UUID planoId,
+            int numeroVersao,
+            Treino treino) {
+
         PlanoTreino plano = buscarPlanoAutorizado(sessao, planoId);
-        Objects.requireNonNull(treino, "O treino e obrigatorio.");
+
+        Objects.requireNonNull(
+                treino,
+                "O treino é obrigatório."
+        );
+
         validarExerciciosAtivos(treino.getItens());
 
         unidadeDeTrabalho.executar(() -> {
@@ -79,9 +184,15 @@ public class PrescricaoService {
         });
     }
 
-    /** Remove uma sessao do rascunho para permitir substitui-la. */
-    public void removerTreino(SessaoUsuario sessao, UUID planoId,
-                             int numeroVersao, String nomeTreino) {
+    /**
+     * Remove uma sessão do rascunho para permitir substituí-la.
+     */
+    public void removerTreino(
+            SessaoUsuario sessao,
+            UUID planoId,
+            int numeroVersao,
+            String nomeTreino) {
+
         PlanoTreino plano = buscarPlanoAutorizado(sessao, planoId);
 
         unidadeDeTrabalho.executar(() -> {
@@ -91,11 +202,21 @@ public class PrescricaoService {
         });
     }
 
-    /** CU02 / RN08: aplica uma politica Strategy ao rascunho. */
-    public void aplicarProgressao(SessaoUsuario sessao, UUID planoId,
-                                 int numeroVersao, PoliticaProgressao politica) {
+    /**
+     * CU02 / RN08: aplica uma política Strategy ao rascunho.
+     */
+    public void aplicarProgressao(
+            SessaoUsuario sessao,
+            UUID planoId,
+            int numeroVersao,
+            PoliticaProgressao politica) {
+
         PlanoTreino plano = buscarPlanoAutorizado(sessao, planoId);
-        Objects.requireNonNull(politica, "A politica e obrigatoria.");
+
+        Objects.requireNonNull(
+                politica,
+                "A política é obrigatória."
+        );
 
         unidadeDeTrabalho.executar(() -> {
             VersaoPlano versao = plano.versaoPorNumero(numeroVersao);
@@ -105,9 +226,16 @@ public class PrescricaoService {
         });
     }
 
-    /** RN02/RN09: publica o rascunho e arquiva a versao anterior. */
-    public void publicar(SessaoUsuario sessao, UUID planoId, int numeroVersao) {
+    /**
+     * RN02/RN09: publica o rascunho e arquiva a versão anterior.
+     */
+    public void publicar(
+            SessaoUsuario sessao,
+            UUID planoId,
+            int numeroVersao) {
+
         PlanoTreino plano = buscarPlanoAutorizado(sessao, planoId);
+
         VersaoPlano versao = plano.versaoPorNumero(numeroVersao);
 
         versao.validarParaPublicacao();
@@ -120,14 +248,28 @@ public class PrescricaoService {
         });
     }
 
-    /** RN04: so permite corrigir versao publicada sem execucoes. */
-    public void corrigirVersao(SessaoUsuario sessao, UUID planoId,
-                              int numeroVersao, List<Treino> treinosCorrigidos) {
+    /**
+     * RN04: só permite corrigir versão publicada sem execuções.
+     */
+    public void corrigirVersao(
+            SessaoUsuario sessao,
+            UUID planoId,
+            int numeroVersao,
+            List<Treino> treinosCorrigidos) {
+
         PlanoTreino plano = buscarPlanoAutorizado(sessao, planoId);
-        Objects.requireNonNull(treinosCorrigidos, "Os treinos sao obrigatorios.");
+
+        Objects.requireNonNull(
+                treinosCorrigidos,
+                "Os treinos são obrigatórios."
+        );
 
         for (Treino treino : treinosCorrigidos) {
-            Objects.requireNonNull(treino, "Um treino nao pode ser nulo.");
+            Objects.requireNonNull(
+                    treino,
+                    "Um treino não pode ser nulo."
+            );
+
             validarExerciciosAtivos(treino.getItens());
         }
 
@@ -144,36 +286,59 @@ public class PrescricaoService {
     }
 
     private PlanoTreino buscarPlanoAutorizado(
-            SessaoUsuario sessao, UUID planoId) {
+            SessaoUsuario sessao,
+            UUID planoId) {
+
         autorizador.exigirPersonal(sessao);
-        Objects.requireNonNull(planoId, "O ID do plano e obrigatorio.");
+
+        Objects.requireNonNull(
+                planoId,
+                "O ID do plano é obrigatório."
+        );
 
         PlanoTreino plano = planos.buscarPorId(planoId)
-                .orElseThrow(() -> new RecursoNaoEncontradoException(
-                        "Plano nao encontrado."));
+                .orElseThrow(() ->
+                        new RecursoNaoEncontradoException(
+                                "Plano não encontrado."
+                        )
+                );
 
         autorizador.exigirPersonalDoPlano(sessao, plano);
+
         return plano;
     }
 
-    private void validarVersaoComExerciciosAtivos(VersaoPlano versao) {
+    private void validarVersaoComExerciciosAtivos(
+            VersaoPlano versao) {
+
         for (Treino treino : versao.getTreinos()) {
             validarExerciciosAtivos(treino.getItens());
         }
     }
 
-    private void validarExerciciosAtivos(List<ItemTreino> itens) {
+    private void validarExerciciosAtivos(
+            List<ItemTreino> itens) {
+
         for (ItemTreino item : itens) {
-            Objects.requireNonNull(item, "Um item de treino nao pode ser nulo.");
+
+            Objects.requireNonNull(
+                    item,
+                    "Um item de treino não pode ser nulo."
+            );
 
             Exercicio exercicio = exercicios.buscarPorId(item.exercicioId())
-                    .orElseThrow(() -> new RecursoNaoEncontradoException(
-                            "Exercicio nao encontrado: " + item.exercicioId()));
+                    .orElseThrow(() ->
+                            new RecursoNaoEncontradoException(
+                                    "Exercício não encontrado: "
+                                            + item.exercicioId()
+                            )
+                    );
 
             if (!exercicio.isAtivo()) {
                 throw new ValorInvalidoException(
-                        "Nao e permitido prescrever ou publicar exercicio inativo: "
-                                + exercicio.getNome());
+                        "Não é permitido prescrever ou publicar exercício inativo: "
+                                + exercicio.getNome()
+                );
             }
         }
     }
