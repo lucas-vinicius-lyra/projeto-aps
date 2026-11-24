@@ -14,7 +14,7 @@ import java.util.Optional;
 import java.util.UUID;
 
 public class MemoriaAtribuicaoRepository
-        implements AtribuicaoRepository {
+        implements AtribuicaoRepository, ParticipanteTransacaoMemoria {
 
     private final Map<UUID, Atribuicao> atribuicoes =
             new HashMap<>();
@@ -28,9 +28,9 @@ public class MemoriaAtribuicaoRepository
                     .stream()
                     .anyMatch(a ->
                             a.estaAtiva()
-                            && a.getAlunoId()
+                                    && a.getAlunoId()
                                     .equals(atribuicao.getAlunoId())
-                            && !a.getId()
+                                    && !a.getId()
                                     .equals(atribuicao.getId()));
 
             if (duplicidade) {
@@ -49,7 +49,7 @@ public class MemoriaAtribuicaoRepository
         return atribuicoes.values().stream()
                 .filter(a ->
                         a.getAlunoId().equals(alunoId)
-                        && a.estaAtiva())
+                                && a.estaAtiva())
                 .findFirst();
     }
 
@@ -62,5 +62,66 @@ public class MemoriaAtribuicaoRepository
                 .sorted(Comparator.comparing(
                         Atribuicao::getInicio).reversed())
                 .toList();
+    }
+
+    /**
+     * Cria uma cópia independente de todas as atribuições.
+     */
+    @Override
+    public Object criarSnapshot() {
+
+        Map<UUID, Atribuicao> copia = new HashMap<>();
+
+        atribuicoes.forEach((id, atribuicao) ->
+                copia.put(id, copiarAtribuicao(atribuicao))
+        );
+
+        return new Snapshot(Map.copyOf(copia));
+    }
+
+    /**
+     * Restaura o estado anterior do repositório.
+     */
+    @Override
+    public void restaurarSnapshot(Object snapshot) {
+
+        if (!(snapshot instanceof Snapshot estado)) {
+            throw new IllegalArgumentException(
+                    "Snapshot inválido para o repositório de atribuições."
+            );
+        }
+
+        atribuicoes.clear();
+
+        estado.atribuicoes().forEach((id, atribuicao) ->
+                atribuicoes.put(id, copiarAtribuicao(atribuicao))
+        );
+    }
+
+    /**
+     * Copia uma atribuição preservando todos os seus dados.
+     *
+     * A cópia é necessária porque Atribuicao possui estado mutável:
+     * status e data de encerramento.
+     */
+    private Atribuicao copiarAtribuicao(Atribuicao original) {
+
+        return new Atribuicao(
+                original.getId(),
+                original.getAlunoId(),
+                original.getPlanoId(),
+                original.getNumeroVersao(),
+                original.getInicio(),
+                original.getFim(),
+                original.getStatus()
+        );
+    }
+
+    /**
+     * Representa o estado salvo do repositório.
+     */
+    private record Snapshot(
+            Map<UUID, Atribuicao> atribuicoes
+    ) {
     }
 }
