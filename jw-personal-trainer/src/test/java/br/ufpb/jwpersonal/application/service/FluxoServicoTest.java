@@ -362,6 +362,7 @@ class FluxoServicoTest {
         );
     }
 
+
     @Test
     void execucaoRepetidaNaoDuplica() {
 
@@ -374,19 +375,35 @@ class FluxoServicoTest {
                 1
         );
 
-        Execucao primeira = execucaoService.registrarExecucao(
-                aluno,
-                "Treino A",
-                LocalDate.now()
+        // Primeira tentativa: deve registrar uma nova execução.
+        ResultadoRegistroExecucao primeira =
+                execucaoService.registrarExecucao(
+                        aluno,
+                        "Treino A",
+                        LocalDate.now()
+                );
+
+        assertFalse(primeira.jaExistia());
+        assertTrue(primeira.foiRegistradaAgora());
+
+        // Segunda tentativa: deve encontrar a execução existente.
+        ResultadoRegistroExecucao segunda =
+                execucaoService.registrarExecucao(
+                        aluno,
+                        "Treino A",
+                        LocalDate.now()
+                );
+
+        assertTrue(segunda.jaExistia());
+        assertFalse(segunda.foiRegistradaAgora());
+
+        // As duas tentativas devem devolver o mesmo registro.
+        assertEquals(
+                primeira.execucao().getId(),
+                segunda.execucao().getId()
         );
 
-        Execucao segunda = execucaoService.registrarExecucao(
-                aluno,
-                "Treino A",
-                LocalDate.now()
-        );
-
-        assertEquals(primeira.getId(), segunda.getId());
+        // Não pode existir duplicação.
         assertEquals(1, execucoes.size());
     }
 

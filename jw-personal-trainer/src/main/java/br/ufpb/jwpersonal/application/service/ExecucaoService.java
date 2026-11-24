@@ -13,11 +13,11 @@ import java.util.Optional;
 import java.util.UUID;
 
 /**
- * Responsavel pelo registro e consulta das execucoes.
+ * Responsável pelo registro e consulta das execuções.
  *
- * CU04 - Registrar execucao de treino.
- * RN01 - Autorizacao.
- * RN06 - Execucao valida e idempotente.
+ * CU04 - Registrar execução de treino.
+ * RN01 - Autorização.
+ * RN06 - Execução válida e idempotente.
  */
 public class ExecucaoService {
 
@@ -43,12 +43,13 @@ public class ExecucaoService {
     }
 
     /**
-     * CU04: registra a conclusao de um treino.
+     * CU04: registra a conclusão de um treino.
      *
-     * So permite registro na atribuicao ativa do aluno.
-     * Repetir a mesma execucao devolve o registro existente.
+     * Só permite registro na atribuição ativa do aluno.
+     * Se a execução já existir, devolve o registro anterior
+     * e informa que não foi criado um novo.
      */
-    public Execucao registrarExecucao(
+    public ResultadoRegistroExecucao registrarExecucao(
             SessaoUsuario sessao,
             String nomeTreino,
             LocalDate data) {
@@ -57,59 +58,71 @@ public class ExecucaoService {
 
         if (nomeTreino == null || nomeTreino.isBlank()) {
             throw new ValorInvalidoException(
-                    "O nome do treino e obrigatorio.");
+                    "O nome do treino é obrigatório."
+            );
         }
 
         Objects.requireNonNull(
-                data, "A data e obrigatoria.");
+                data,
+                "A data é obrigatória."
+        );
 
         return unidadeDeTrabalho.executar(() -> {
 
             UUID alunoId = sessao.usuarioId();
 
-            // 1. Buscar a atribuicao ativa do aluno
+            // 1. Buscar a atribuição ativa do aluno.
             Atribuicao atribuicao =
                     atribuicoes.buscarAtivaDoAluno(alunoId)
-                    .orElseThrow(() ->
-                            new RecursoNaoEncontradoException(
-                                    "O aluno nao possui atribuicao ativa."));
+                            .orElseThrow(() ->
+                                    new RecursoNaoEncontradoException(
+                                            "O aluno não possui atribuição ativa."
+                                    )
+                            );
 
-            // 2. Conferir se a atribuicao esta ativa
+            // 2. Conferir se a atribuição está ativa.
             if (!atribuicao.estaAtiva()) {
                 throw new ValorInvalidoException(
-                        "A atribuicao nao esta ativa.");
+                        "A atribuição não está ativa."
+                );
             }
 
-            // 3. Validar a data da execucao
+            // 3. Validar a data da execução.
             if (data.isAfter(LocalDate.now())
                     || data.isBefore(atribuicao.getInicio())) {
 
                 throw new ValorInvalidoException(
-                        "Data fora do periodo permitido.");
+                        "Data fora do período permitido."
+                );
             }
 
-            // 4. Buscar o plano atribuido
+            // 4. Buscar o plano atribuído.
             PlanoTreino plano =
                     planos.buscarPorId(atribuicao.getPlanoId())
-                    .orElseThrow(() ->
-                            new RecursoNaoEncontradoException(
-                                    "Plano nao encontrado."));
+                            .orElseThrow(() ->
+                                    new RecursoNaoEncontradoException(
+                                            "Plano não encontrado."
+                                    )
+                            );
 
-            // 5. Buscar a versao exata da atribuicao
+            // 5. Buscar a versão exata da atribuição.
             VersaoPlano versao =
                     plano.versaoPorNumero(
-                            atribuicao.getNumeroVersao());
+                            atribuicao.getNumeroVersao()
+                    );
 
-            // 6. Verificar se o treino pertence a versao
+            // 6. Verificar se o treino pertence à versão.
             Treino treino = versao.getTreinos().stream()
                     .filter(t -> t.getNome()
                             .equalsIgnoreCase(nomeTreino.trim()))
                     .findFirst()
                     .orElseThrow(() ->
                             new RecursoNaoEncontradoException(
-                                    "Treino nao pertence a versao atribuida."));
+                                    "Treino não pertence à versão atribuída."
+                            )
+                    );
 
-            // 7. Preparar o registro de execucao
+            // 7. Preparar o novo registro.
             Execucao nova = new Execucao(
                     alunoId,
                     atribuicao.getId(),
@@ -119,21 +132,33 @@ public class ExecucaoService {
                     data
             );
 
-            // 8. Verificar duplicidade pela chave natural
-            return buscarExecucaoExistente(
-                    alunoId, nova.chaveNatural())
-                    .orElseGet(() -> {
+            // 8. Verificar se a execução já existe.
+            Optional<Execucao> existente =
+                    buscarExecucaoExistente(
+                            alunoId,
+                            nova.chaveNatural()
+                    );
 
-                        // 9. Salvar somente se ainda nao existir
-                        execucoes.salvar(nova);
+            // 9. Se existir, devolver o registro anterior.
+            if (existente.isPresent()) {
+                return new ResultadoRegistroExecucao(
+                        existente.get(),
+                        true
+                );
+            }
 
-                        return nova;
-                    });
+            // 10. Se não existir, salvar o novo registro.
+            execucoes.salvar(nova);
+
+            return new ResultadoRegistroExecucao(
+                    nova,
+                    false
+            );
         });
     }
 
     /**
-     * Consulta o historico de execucoes do proprio aluno.
+     * Consulta o histórico de execuções do próprio aluno.
      */
     public List<Execucao> consultarHistorico(
             SessaoUsuario sessao) {
@@ -142,14 +167,16 @@ public class ExecucaoService {
 
         return List.copyOf(
                 execucoes.historicoDoAluno(
-                        sessao.usuarioId()));
+                        sessao.usuarioId()
+                )
+        );
     }
 
     /**
-     * Busca uma execucao pela chave natural.
+     * Busca uma execução pela chave natural.
      *
-     * Utiliza o metodo historicoDoAluno,
-     * ja existente no contrato ExecucaoRepository.
+     * Utiliza o histórico já disponível no contrato
+     * ExecucaoRepository.
      */
     private Optional<Execucao> buscarExecucaoExistente(
             UUID alunoId,
