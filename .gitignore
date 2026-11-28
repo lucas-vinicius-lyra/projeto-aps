@@ -1,0 +1,8 @@
+target/
+data/
+*.db
+*.db-journal
+*.log
+.idea/workspace.xml
+*.iml
+*.class
