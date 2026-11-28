@@ -203,6 +203,50 @@ public class PrescricaoService {
     }
 
     /**
+     * Ajusta um treino do rascunho (itens ou nome) em uma única transação.
+     */
+    public void substituirTreino(
+            SessaoUsuario sessao,
+            UUID planoId,
+            int numeroVersao,
+            String nomeAtual,
+            Treino novoTreino) {
+
+        PlanoTreino plano = buscarPlanoAutorizado(sessao, planoId);
+
+        Objects.requireNonNull(
+                novoTreino,
+                "O treino é obrigatório."
+        );
+
+        validarExerciciosAtivos(novoTreino.getItens());
+
+        unidadeDeTrabalho.executar(() -> {
+            plano.versaoPorNumero(numeroVersao)
+                    .substituirTreino(nomeAtual, novoTreino);
+            planos.salvar(plano);
+            return null;
+        });
+    }
+
+    /**
+     * RN04: informa se a versão publicada ainda aceita correção direta.
+     * Serve para avisar o usuário antes da edição; a regra continua sendo
+     * aplicada em {@link #corrigirVersao}.
+     */
+    public boolean podeCorrigirDiretamente(
+            SessaoUsuario sessao,
+            UUID planoId,
+            int numeroVersao) {
+
+        PlanoTreino plano = buscarPlanoAutorizado(sessao, planoId);
+
+        return plano.versaoPorNumero(numeroVersao).getEstado()
+                == EstadoVersao.PUBLICADA
+                && !execucoes.existeParaVersao(planoId, numeroVersao);
+    }
+
+    /**
      * CU02 / RN08: aplica uma política Strategy ao rascunho.
      */
     public void aplicarProgressao(

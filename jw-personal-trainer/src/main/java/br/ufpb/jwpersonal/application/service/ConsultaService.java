@@ -1,6 +1,8 @@
 
 package br.ufpb.jwpersonal.application.service;
 
+import br.ufpb.jwpersonal.application.evento.NotificadorAluno;
+import br.ufpb.jwpersonal.application.evento.PlanoAtribuidoEvento;
 import br.ufpb.jwpersonal.domain.excecao.AutorizacaoNegadaException;
 import br.ufpb.jwpersonal.domain.excecao.RecursoNaoEncontradoException;
 import br.ufpb.jwpersonal.domain.model.Atribuicao;
@@ -28,17 +30,81 @@ public class ConsultaService {
     private final AtribuicaoRepository atribuicoes;
     private final ExecucaoRepository execucoes;
     private final Autorizador autorizador;
+    private final NotificadorAluno notificador;
 
+    /**
+     * Construtor compatível com os componentes existentes
+     * (sem notificações conectadas).
+     */
     public ConsultaService(
             PlanoRepository planos,
             AtribuicaoRepository atribuicoes,
             ExecucaoRepository execucoes,
             Autorizador autorizador) {
 
+        this(planos, atribuicoes, execucoes, autorizador,
+                new NotificadorAluno());
+    }
+
+    public ConsultaService(
+            PlanoRepository planos,
+            AtribuicaoRepository atribuicoes,
+            ExecucaoRepository execucoes,
+            Autorizador autorizador,
+            NotificadorAluno notificador) {
+
         this.planos = Objects.requireNonNull(planos);
         this.atribuicoes = Objects.requireNonNull(atribuicoes);
         this.execucoes = Objects.requireNonNull(execucoes);
         this.autorizador = Objects.requireNonNull(autorizador);
+        this.notificador = Objects.requireNonNull(notificador);
+    }
+
+    /** Planos de autoria do Personal autenticado, com suas versoes. */
+    public List<PlanoTreino> listarPlanosDoPersonal(SessaoUsuario sessao) {
+
+        autorizador.exigirPersonal(sessao);
+
+        return planos.listarPorPersonal(sessao.usuarioId());
+    }
+
+    /**
+     * Titulo de um plano: para o Personal autor ou para o aluno
+     * que ja teve esse plano atribuido.
+     */
+    public String consultarTituloDoPlano(SessaoUsuario sessao, UUID planoId) {
+
+        autorizador.exigirAutenticado(sessao);
+
+        Objects.requireNonNull(planoId, "O ID do plano e obrigatorio.");
+
+        PlanoTreino plano = buscarPlano(planoId);
+
+        if (sessao.ehPersonal()) {
+
+            autorizador.exigirPersonalDoPlano(sessao, plano);
+
+        } else if (atribuicoes.historicoDoAluno(sessao.usuarioId())
+                .stream()
+                .noneMatch(a -> a.getPlanoId().equals(planoId))) {
+
+            throw new AutorizacaoNegadaException(
+                    "O aluno nao possui vinculo com este plano.");
+        }
+
+        return plano.getTitulo();
+    }
+
+    /**
+     * Notificacoes do proprio aluno. Ficam apenas em memoria:
+     * nao sobrevivem ao encerramento da aplicacao.
+     */
+    public List<PlanoAtribuidoEvento> consultarMinhasNotificacoes(
+            SessaoUsuario sessao) {
+
+        autorizador.exigirAluno(sessao);
+
+        return notificador.notificacoesDoAluno(sessao.usuarioId());
     }
 
     /**
@@ -68,7 +134,7 @@ public class ConsultaService {
             if (ativa.isEmpty()) {
                 throw new AutorizacaoNegadaException(
                         "Nao ha atribuicao ativa que comprove "
-                        + "o vinculo com este personal.");
+                                + "o vinculo com este personal.");
             }
 
             verificarAutoria(
@@ -109,15 +175,15 @@ public class ConsultaService {
 
             boolean vinculado =
                     atribuicoes.historicoDoAluno(
-                            sessao.usuarioId())
-                    .stream()
-                    .anyMatch(a ->
-                            a.getPlanoId().equals(planoId));
+                                    sessao.usuarioId())
+                            .stream()
+                            .anyMatch(a ->
+                                    a.getPlanoId().equals(planoId));
 
             if (!vinculado) {
                 throw new AutorizacaoNegadaException(
                         "O aluno nao possui vinculo "
-                        + "com este plano.");
+                                + "com este plano.");
             }
         }
 
@@ -163,17 +229,17 @@ public class ConsultaService {
         // Confirma vinculo historico entre personal e aluno.
         boolean vinculado =
                 atribuicoes.historicoDoAluno(alunoId)
-                .stream()
-                .anyMatch(a ->
-                        planos.buscarPorId(a.getPlanoId())
-                        .map(p -> p.getPersonalId()
-                                .equals(sessao.usuarioId()))
-                        .orElse(false));
+                        .stream()
+                        .anyMatch(a ->
+                                planos.buscarPorId(a.getPlanoId())
+                                        .map(p -> p.getPersonalId()
+                                                .equals(sessao.usuarioId()))
+                                        .orElse(false));
 
         if (!vinculado) {
             throw new AutorizacaoNegadaException(
                     "O aluno nao possui vinculo "
-                    + "com este personal.");
+                            + "com este personal.");
         }
 
         // Retorna apenas execucoes dos planos
@@ -182,9 +248,9 @@ public class ConsultaService {
                 .stream()
                 .filter(e ->
                         planos.buscarPorId(e.getPlanoId())
-                        .map(p -> p.getPersonalId()
-                                .equals(sessao.usuarioId()))
-                        .orElse(false))
+                                .map(p -> p.getPersonalId()
+                                        .equals(sessao.usuarioId()))
+                                .orElse(false))
                 .toList();
     }
 

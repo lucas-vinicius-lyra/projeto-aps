@@ -10,6 +10,7 @@ import br.ufpb.jwpersonal.repository.*;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
@@ -233,6 +234,51 @@ public class AtribuicaoService {
         }
 
         return resultado.atribuicao();
+    }
+
+    /**
+     * Permite ao Personal identificar um aluno pelo e-mail exato.
+     * A mensagem é a mesma para e-mail inexistente, de outro perfil ou inativo.
+     */
+    public AlunoResumo localizarAlunoPorEmail(
+            SessaoUsuario sessao,
+            String email) {
+
+        autorizador.exigirPersonal(sessao);
+
+        if (email == null || email.isBlank()) {
+            throw new ValorInvalidoException("O e-mail é obrigatório.");
+        }
+
+        Usuario aluno = usuarios
+                .buscarPorEmail(email.trim().toLowerCase(Locale.ROOT))
+                .filter(u -> u.possuiPerfil(Perfil.ALUNO) && u.isAtivo())
+                .orElseThrow(() ->
+                        new RecursoNaoEncontradoException(
+                                "Aluno não encontrado."));
+
+        return new AlunoResumo(
+                aluno.getId(), aluno.getNome(), aluno.getEmail());
+    }
+
+    /**
+     * Histórico de atribuições de um aluno, restrito aos planos
+     * de autoria do Personal autenticado (RN01).
+     */
+    public List<Atribuicao> historicoParaPersonal(
+            SessaoUsuario sessao,
+            UUID alunoId) {
+
+        autorizador.exigirPersonal(sessao);
+
+        Objects.requireNonNull(alunoId, "O ID do aluno é obrigatório.");
+
+        return atribuicoes.historicoDoAluno(alunoId)
+                .stream()
+                .filter(a -> planos.buscarPorId(a.getPlanoId())
+                        .map(p -> sessao.pertenceA(p.getPersonalId()))
+                        .orElse(false))
+                .toList();
     }
 
     /**

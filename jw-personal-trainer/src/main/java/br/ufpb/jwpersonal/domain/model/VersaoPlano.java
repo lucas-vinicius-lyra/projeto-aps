@@ -118,6 +118,46 @@ public final class VersaoPlano {
     }
 
     /**
+     * Troca um treino do rascunho por outro, mantendo a posição.
+     * A validação ocorre antes da troca, portanto não há estado parcial.
+     */
+    public void substituirTreino(String nomeAtual, Treino novoTreino) {
+
+        verificarSeRascunho();
+
+        Objects.requireNonNull(novoTreino, "O treino é obrigatório.");
+
+        if (nomeAtual == null || nomeAtual.isBlank()) {
+            throw new ValorInvalidoException(
+                    "Informe o nome do treino que deseja alterar.");
+        }
+
+        int posicao = -1;
+
+        for (int i = 0; i < treinos.size(); i++) {
+            if (normalizarNome(treinos.get(i).getNome())
+                    .equals(normalizarNome(nomeAtual))) {
+                posicao = i;
+            }
+        }
+
+        if (posicao < 0) {
+            throw new RecursoNaoEncontradoException(
+                    "Não foi encontrado um treino com esse nome na versão.");
+        }
+
+        for (int i = 0; i < treinos.size(); i++) {
+            if (i != posicao && normalizarNome(treinos.get(i).getNome())
+                    .equals(normalizarNome(novoTreino.getNome()))) {
+                throw new ValorInvalidoException(
+                        "Já existe um treino com esse nome nesta versão.");
+            }
+        }
+
+        treinos.set(posicao, novoTreino.copiar());
+    }
+
+    /**
      * Aplica uma estratégia aos itens de todos os treinos da versão em rascunho.
      */
     public void aplicarProgressao(Function<ItemTreino, ItemTreino> estrategia) {

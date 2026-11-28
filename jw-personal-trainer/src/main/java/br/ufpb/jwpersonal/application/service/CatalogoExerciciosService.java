@@ -84,6 +84,20 @@ public class CatalogoExerciciosService {
         return repositorio.listarAtivos();
     }
 
+    // Consultar os detalhes de um exercício, inclusive inativo,
+    // para exibir prescrições antigas. Não permite reativação.
+    public Exercicio consultar(
+            SessaoUsuario sessao,
+            UUID exercicioId) {
+
+        autorizador.exigirAutenticado(sessao);
+
+        Objects.requireNonNull(
+                exercicioId, "O ID do exercício é obrigatório.");
+
+        return buscar(exercicioId);
+    }
+
     // Método auxiliar
     private Exercicio buscar(UUID id) {
 
